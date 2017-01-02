@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="10008" doc:name="HTTP Listener Configuration"/>
+    <db:generic-config name="Borndigital" url="jdbc:postgresql://${db.host}:${db.port}/${db.database}?password=${db.password}&amp;user=${db.username}" driverClassName="org.postgresql.Driver" doc:name="Borndigital DB">
+        <reconnect-forever></reconnect-forever>  
+    </db:generic-config>
+    <context:property-placeholder location="${mule.env}.properties"/>
+    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.id]" doc:name="Caching Strategy">
+        <in-memory-store name="memory_store" entryTTL="604800000"/>
+    </ee:object-store-caching-strategy>
+    <flow name="aspect-ratio-apiFlow">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/*" allowedMethods="GET" doc:name="/{id}"/>
+        <logger message="Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
+        <set-variable variableName="id" value="#[message.inboundProperties.'http.request.uri'.substring(message.inboundProperties.'http.request.uri'.lastIndexOf('/')+1)]" doc:name="Set id (pid or media_id)"/>
+        <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
+        <ee:cache cachingStrategy-ref="Caching_Strategy" doc:name="Cache">
+            <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
+                <db:parameterized-query><![CDATA[SELECT *
+FROM vrt_message_buffer
+WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
+LIMIT 1;]]></db:parameterized-query>
+            </db:select>
+            <choice doc:name="Metadata found?">
+                <when expression="#[payload.size()&gt;0]">
+                    <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
+                    <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
+                    <set-payload value="#[payload[0].message_payload]" doc:name="Set Payload with metadata"/>
+                    <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
+                    <set-variable variableName="factorNumerator" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumerator (width)"/>
+                    <set-variable variableName="factorDenominator" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominator (height)"/>
+                    <dw:transform-message doc:name="Return response">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "success"
+	},
+	"data": {
+		media_id: flowVars.media_id,
+		pid: flowVars.pid,
+		factor_numerator: flowVars.factorNumerator,
+		factor_denominator: flowVars.factorDenominator,
+		aspect_ratio: flowVars.factorNumerator ++ ":" ++ flowVars.factorDenominator
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                </when>
+                <otherwise>
+                    <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
+                    <logger level="INFO" doc:name="Send request for metadata?"/>
+                    <dw:transform-message doc:name="Return response not found">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "failure"
+	},
+	"data": {
+		"id": "Aspect ratio not found."
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                </otherwise>
+            </choice>
+        </ee:cache>
+        <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+        <logger message="Returns response #[payload]" level="INFO" doc:name="Returns response"/>
+    </flow>
+</mule>
