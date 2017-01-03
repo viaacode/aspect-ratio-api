@@ -16,6 +16,9 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
     <db:generic-config name="Borndigital" url="jdbc:postgresql://${db.host}:${db.port}/${db.database}?password=${db.password}&amp;user=${db.username}" driverClassName="org.postgresql.Driver" doc:name="Borndigital DB">
         <reconnect-forever></reconnect-forever>  
     </db:generic-config>
+    <db:generic-config name="MAM" url="jdbc:postgresql://${db.mam.host}:${db.mam.port}/${db.mam.database}?password=${db.mam.password}&amp;user=${db.mam.username}" driverClassName="org.postgresql.Driver" doc:name="Borndigital DB">
+        <reconnect-forever></reconnect-forever>  
+    </db:generic-config>
     <context:property-placeholder location="${mule.env}.properties"/>
     <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.id]" doc:name="Caching Strategy">
         <in-memory-store name="memory_store" entryTTL="604800000"/>
@@ -83,5 +86,98 @@ LIMIT 1;]]></db:parameterized-query>
         </ee:cache>
         <byte-array-to-string-transformer doc:name="Byte Array to String"/>
         <logger message="Returns response #[payload]" level="INFO" doc:name="Returns response"/>
+    </flow>
+    <flow name="aspect-ratio-apiFlow1">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/testbeeld/{id}" allowedMethods="GET" doc:name="/testbeeld/{id}"/>
+        <logger message="Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Copy_of_Request received"/>
+        <set-variable variableName="id" value="#[message.inboundProperties.'http.uri.params'.id]" doc:name="Copy_of_Set id (pid or media_id)"/>
+        <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Copy_of_Set path"/>
+        <ee:cache doc:name="Cache">
+            <db:select config-ref="MAM" doc:name="Get metadata from MAM">
+                <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.id]) AND type = 'SIDECAR_CHECK';]]></db:parameterized-query>
+            </db:select>
+            <choice doc:name="Choice">
+                <when expression="#[payload != null &amp;&amp; payload.size() &gt; 0]">
+                    <set-payload value="#[payload[0].comment]" doc:name="Set Payload"/>
+                    <mulexml:xml-to-dom-transformer doc:name="XML to DOM"/>
+                    <set-variable variableName="verwant_aan" value="#[xpath3(&quot;//*[local-name()='is_verwant_aan']/text()&quot;)]" doc:name="Set verwant_aan"/>
+                    <set-variable variableName="media_id" value="#[xpath3(&quot;//*[local-name()='dc_identifier_cpid']/text()&quot;)]" doc:name="Set media_id"/>
+                    <logger message="Verwant aan: #[flowVars.verwant_aan]" level="INFO" doc:name="Logger"/>
+                    <db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
+                        <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.verwant_aan]) AND type = 'CODEC_CHECK';]]></db:parameterized-query>
+                    </db:select>
+                    <choice doc:name="Choice">
+                        <when expression="#[payload != null &amp;&amp; payload.size() &gt; 0]">
+                            <set-payload doc:name="Set Payload" value="#[payload[0]]"/>
+                            <set-variable variableName="comment" value="#[payload.comment]" doc:name="Set comment"/>
+                            <logger message="#[flowVars.comment]" level="INFO" doc:name="Logger"/>
+                            <expression-component doc:name="SET ar"><![CDATA[import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
+temp.find();
+flowVars.ar = temp.group(1);]]></expression-component>
+                            <logger message="AR: #[flowVars.ar]" level="INFO" doc:name="Logger"/>
+                            <dw:transform-message doc:name="Return response">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "success"
+	},
+	"data": {
+		media_id: flowVars.media_id,
+		vrt_pid: flowVars.verwant_aan,
+		pid: flowVars.id,
+		aspect_ratio: flowVars.ar
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                        </when>
+                        <otherwise>
+                                                <logger message="Metadata not found for #[flowVars.verwant_aan]" level="INFO" doc:name="Metadata not found"/>
+                    <logger level="INFO" doc:name="Send request for metadata?"/>
+                    <dw:transform-message doc:name="Return response not found">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "failure"
+	},
+	"data": {
+		"id": "Aspect ratio not found."
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                        </otherwise>
+                    </choice>
+                </when>
+                <otherwise>
+                                        <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
+                    <logger level="INFO" doc:name="Send request for metadata?"/>
+                    <dw:transform-message doc:name="Return response not found">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "failure"
+	},
+	"data": {
+		"id": "Aspect ratio not found."
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                </otherwise>
+            </choice>
+        </ee:cache>
     </flow>
 </mule>
