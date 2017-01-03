@@ -94,11 +94,11 @@ LIMIT 1;]]></db:parameterized-query>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Copy_of_Set path"/>
         <ee:cache doc:name="Cache">
             <db:select config-ref="MAM" doc:name="Get metadata from MAM">
-                <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.id]) AND type = 'SIDECAR_CHECK';]]></db:parameterized-query>
+                <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.id]) AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') ORDER BY identifier DESC;;]]></db:parameterized-query>
             </db:select>
             <choice doc:name="Choice">
                 <when expression="#[payload != null &amp;&amp; payload.size() &gt; 0]">
-                    <set-payload value="#[payload[0].comment]" doc:name="Set Payload"/>
+                    <set-payload value="#[payload[0].comment.replace(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)]" doc:name="Set Payload"/>
                     <mulexml:xml-to-dom-transformer doc:name="XML to DOM"/>
                     <set-variable variableName="verwant_aan" value="#[xpath3(&quot;//*[local-name()='is_verwant_aan']/text()&quot;)]" doc:name="Set verwant_aan"/>
                     <set-variable variableName="media_id" value="#[xpath3(&quot;//*[local-name()='dc_identifier_cpid']/text()&quot;)]" doc:name="Set media_id"/>
@@ -115,8 +115,11 @@ LIMIT 1;]]></db:parameterized-query>
 import java.util.regex.Pattern;
 
 Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
-temp.find();
-flowVars.ar = temp.group(1);]]></expression-component>
+if (temp.find()) {
+    flowVars.ar = temp.group(1);
+} else {
+flowVars.ar = "unknown";
+}]]></expression-component>
                             <logger message="AR: #[flowVars.ar]" level="INFO" doc:name="Logger"/>
                             <dw:transform-message doc:name="Return response">
                         <dw:set-payload><![CDATA[%dw 1.0
@@ -138,7 +141,8 @@ flowVars.ar = temp.group(1);]]></expression-component>
                     </dw:transform-message>
                         </when>
                         <otherwise>
-                                                <logger message="Metadata not found for #[flowVars.verwant_aan]" level="INFO" doc:name="Metadata not found"/>
+                    <logger message="Metadata not found for #[flowVars.verwant_aan]" level="INFO" doc:name="Metadata not found"/>
+                    
                     <logger level="INFO" doc:name="Send request for metadata?"/>
                     <dw:transform-message doc:name="Return response not found">
                         <dw:set-payload><![CDATA[%dw 1.0
@@ -151,7 +155,9 @@ flowVars.ar = temp.group(1);]]></expression-component>
 		status: "failure"
 	},
 	"data": {
-		"id": "Aspect ratio not found."
+		"id": "Aspect ratio not found.",
+		vrt_pid: flowVars.verwant_aan when flowVars.verwant_aan != '' otherwise null,
+		pid: flowVars.id
 	}
 }]]></dw:set-payload>
                     </dw:transform-message>
@@ -159,7 +165,7 @@ flowVars.ar = temp.group(1);]]></expression-component>
                     </choice>
                 </when>
                 <otherwise>
-                                        <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
+                    <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
                     <logger level="INFO" doc:name="Send request for metadata?"/>
                     <dw:transform-message doc:name="Return response not found">
                         <dw:set-payload><![CDATA[%dw 1.0
