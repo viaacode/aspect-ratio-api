@@ -58,7 +58,7 @@ LIMIT 1;]]></db:parameterized-query>
 		pid: flowVars.pid,
 		factor_numerator: flowVars.factorNumerator,
 		factor_denominator: flowVars.factorDenominator,
-		aspect_ratio: flowVars.factorNumerator ++ ":" ++ flowVars.factorDenominator
+		aspect_ratio: (flowVars.factorNumerator ++ ":" ++ flowVars.factorDenominator when flowVars.factorNumerator != null and flowVars.factorNumerator != '' and flowVars.factorDenominator != null and flowVars.factorDenominator != '' otherwise 'unknown')
 	}
 }]]></dw:set-payload>
                     </dw:transform-message>
