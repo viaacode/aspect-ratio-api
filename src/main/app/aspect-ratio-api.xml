@@ -20,29 +20,62 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <reconnect-forever></reconnect-forever>  
     </db:generic-config>
     <context:property-placeholder location="${mule.env}.properties"/>
-    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.id]" doc:name="Caching Strategy">
+    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.path]" doc:name="Caching Strategy">
         <in-memory-store name="memory_store" entryTTL="604800000"/>
     </ee:object-store-caching-strategy>
-    <flow name="aspect-ratio-apiFlow">
-        <http:listener config-ref="HTTP_Listener_Configuration" path="/*" allowedMethods="GET" doc:name="/{id}"/>
-        <logger message="Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
+    <flow name="aspect-ratio-vrt">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/vrt/{id}" allowedMethods="GET" doc:name="/vrt/{id}"/>
+        <logger message="VRT Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
         <set-variable variableName="id" value="#[message.inboundProperties.'http.request.uri'.substring(message.inboundProperties.'http.request.uri'.lastIndexOf('/')+1)]" doc:name="Set id (pid or media_id)"/>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
         <ee:cache cachingStrategy-ref="Caching_Strategy" doc:name="Cache">
-            <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
-                <db:parameterized-query><![CDATA[SELECT *
-FROM vrt_message_buffer
-WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
-LIMIT 1;]]></db:parameterized-query>
+            <flow-ref name="aspect_ratio_metadata" doc:name="aspect_ratio_metadata"/>
+            <set-variable variableName="external_id" value="#[flowVars.pid != null ? flowVars.pid : flowVars.id]" doc:name="Set external_id with pid, otherwise with id when pid not found in buffer"/>
+            <flow-ref name="aspect_ratio_essence" doc:name="aspect_ratio_essence"/>
+            <dw:transform-message doc:name="Return response">
+                <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "success"
+	},
+	"data": {
+		media_id: (flowVars.media_id) when flowVars.media_id != null otherwise 'unknown',
+		pid: (flowVars.pid) when flowVars.pid != null otherwise 'unknown',
+		factor_numerator_metadata: (flowVars.factorNumeratorMetadata) when flowVars.factorNumeratorMetadata != null otherwise 'unknown',
+		factor_denominator_metadata: (flowVars.factorDenominatorMetadata) when flowVars.factorDenominatorMetadata != null otherwise 'unknown',
+		aspect_ratio_metadata: flowVars.aspect_ratio_metadata when flowVars.aspect_ratio_metadata != null otherwise 'unknown',
+		aspect_ratio_essence: (flowVars.aspect_ratio_essence) when flowVars.aspect_ratio_essence != null otherwise 'unknown'
+	}
+}]]></dw:set-payload>
+            </dw:transform-message>
+            <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+        </ee:cache>
+        <logger message="Returns response #[payload]" level="INFO" doc:name="Returns response"/>
+    </flow>
+    <flow name="testbeeldrelation">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/testbeeld/{testbeeld_pid}" allowedMethods="GET" doc:name="/testbeeld/{testbeeld_pid}"/>
+        <logger message="Testbeeld Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
+        <set-variable variableName="testbeeld_pid" value="#[message.inboundProperties.'http.uri.params'.testbeeld_pid]" doc:name="Set testbeeld_pid"/>
+        <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
+        <ee:cache doc:name="Cache" cachingStrategy-ref="Caching_Strategy">
+            <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
+                <db:parameterized-query><![CDATA[SELECT comment 
+FROM premis_events 
+WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid]) 
+AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') 
+ORDER BY identifier DESC;]]></db:parameterized-query>
             </db:select>
-            <choice doc:name="Metadata found?">
-                <when expression="#[payload.size()&gt;0]">
-                    <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
-                    <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
-                    <set-payload value="#[payload[0].message_payload]" doc:name="Set Payload with metadata"/>
-                    <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
-                    <set-variable variableName="factorNumerator" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumerator (width)"/>
-                    <set-variable variableName="factorDenominator" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominator (height)"/>
+            <choice doc:name="Original vrt file found?">
+                <when expression="#[payload.size() &gt; 0]">
+                    <set-payload value="#[payload[0].comment.replace(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)]" doc:name="Set Payload with comment that contains metadata"/>
+                    <mulexml:xml-to-dom-transformer doc:name="XML to DOM"/>
+                    <set-variable variableName="media_id" value="#[xpath3(&quot;//*[local-name()='dc_identifier_cpid']/text()&quot;)]" doc:name="Set media_id"/>
+                    <set-variable variableName="verwant_aan" value="#[xpath3(&quot;//*[local-name()='is_verwant_aan']/text()&quot;)]" doc:name="Set verwant_aan"/>
+                    <logger message="Verwant aan: #[flowVars.verwant_aan]" level="INFO" doc:name="Verwant aan gevonden"/>
                     <dw:transform-message doc:name="Return response">
                         <dw:set-payload><![CDATA[%dw 1.0
 %output application/json
@@ -55,16 +88,15 @@ LIMIT 1;]]></db:parameterized-query>
 	},
 	"data": {
 		media_id: flowVars.media_id,
-		pid: flowVars.pid,
-		factor_numerator: flowVars.factorNumerator,
-		factor_denominator: flowVars.factorDenominator,
-		aspect_ratio: (flowVars.factorNumerator ++ ":" ++ flowVars.factorDenominator when flowVars.factorNumerator != null and flowVars.factorNumerator != '' and flowVars.factorDenominator != null and flowVars.factorDenominator != '' otherwise 'unknown')
+		vrt_pid: flowVars.verwant_aan,
+		testbeeld_pid: flowVars.testbeeld_pid
 	}
 }]]></dw:set-payload>
                     </dw:transform-message>
-                </when>
-                <otherwise>
-                    <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
+                    <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+                                 </when>
+                                 <otherwise>
+                    <logger message="Metadata not found for #[flowVars.testbeeld_pid]" level="INFO" doc:name="Metadata not found"/>
                     <logger level="INFO" doc:name="Send request for metadata?"/>
                     <dw:transform-message doc:name="Return response not found">
                         <dw:set-payload><![CDATA[%dw 1.0
@@ -77,75 +109,82 @@ LIMIT 1;]]></db:parameterized-query>
 		status: "failure"
 	},
 	"data": {
-		"id": "Aspect ratio not found."
+		"id": "Verwant aan relatie met VRT item niet gevonden"
 	}
 }]]></dw:set-payload>
                     </dw:transform-message>
-                </otherwise>
+                    <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+                                 </otherwise>
             </choice>
         </ee:cache>
-        <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-        <logger message="Returns response #[payload]" level="INFO" doc:name="Returns response"/>
     </flow>
-    <flow name="aspect-ratio-apiFlow1">
-        <http:listener config-ref="HTTP_Listener_Configuration" path="/testbeeld/{id}" allowedMethods="GET" doc:name="/testbeeld/{id}"/>
-        <logger message="Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Copy_of_Request received"/>
-        <set-variable variableName="id" value="#[message.inboundProperties.'http.uri.params'.id]" doc:name="Copy_of_Set id (pid or media_id)"/>
-        <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Copy_of_Set path"/>
-        <ee:cache doc:name="Cache">
-            <db:select config-ref="MAM" doc:name="Get metadata from MAM">
-                <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.id]) AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') ORDER BY identifier DESC;;]]></db:parameterized-query>
-            </db:select>
-            <choice doc:name="Choice">
-                <when expression="#[payload != null &amp;&amp; payload.size() &gt; 0]">
-                    <set-payload value="#[payload[0].comment.replace(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)]" doc:name="Set Payload"/>
-                    <mulexml:xml-to-dom-transformer doc:name="XML to DOM"/>
-                    <set-variable variableName="verwant_aan" value="#[xpath3(&quot;//*[local-name()='is_verwant_aan']/text()&quot;)]" doc:name="Set verwant_aan"/>
-                    <set-variable variableName="media_id" value="#[xpath3(&quot;//*[local-name()='dc_identifier_cpid']/text()&quot;)]" doc:name="Set media_id"/>
-                    <logger message="Verwant aan: #[flowVars.verwant_aan]" level="INFO" doc:name="Logger"/>
-                    <db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
-                        <db:parameterized-query><![CDATA[SELECT comment FROM premis_events WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.verwant_aan]) AND type = 'CODEC_CHECK';]]></db:parameterized-query>
-                    </db:select>
-                    <choice doc:name="Choice">
-                        <when expression="#[payload != null &amp;&amp; payload.size() &gt; 0]">
-                            <set-payload doc:name="Set Payload" value="#[payload[0]]"/>
-                            <set-variable variableName="comment" value="#[payload.comment]" doc:name="Set comment"/>
-                            <logger message="#[flowVars.comment]" level="INFO" doc:name="Logger"/>
-                            <expression-component doc:name="SET ar"><![CDATA[import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
-if (temp.find()) {
-    flowVars.ar = temp.group(1);
-} else {
-flowVars.ar = "unknown";
-}]]></expression-component>
-                            <logger message="AR: #[flowVars.ar]" level="INFO" doc:name="Logger"/>
-                            <dw:transform-message doc:name="Return response">
-                        <dw:set-payload><![CDATA[%dw 1.0
+    <sub-flow name="aspect_ratio_metadata">
+        <logger message="Id: #[flowVars.id]" level="INFO" doc:name="Expects pid or media_id as 'id'"/>
+        <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
+            <db:parameterized-query><![CDATA[SELECT *
+FROM vrt_message_buffer
+WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
+LIMIT 1;]]></db:parameterized-query>
+        </db:select>
+        <choice doc:name="Metadata found?">
+            <when expression="#[payload.size()&gt;0]">
+                <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
+                <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
+                <set-payload value="#[payload[0].message_payload]" doc:name="Set Payload with metadata"/>
+                <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
+                <set-variable variableName="factorNumeratorMetadata" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumeratorMetadata (width)"/>
+                <set-variable variableName="factorDenominatorMetadata" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominatorMetadata (height)"/>
+                <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
+            </when>
+            <otherwise>
+                <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
+                <logger level="INFO" doc:name="Send request for metadata?"/>
+                <dw:transform-message doc:name="Return response not found">
+                    <dw:set-payload><![CDATA[%dw 1.0
 %output application/json
 ---
 {
 	"header": {
 		method: "GET",
 		path: flowVars.path,
-		status: "success"
+		status: "failure"
 	},
 	"data": {
-		media_id: flowVars.media_id,
-		vrt_pid: flowVars.verwant_aan,
-		pid: flowVars.id,
-		aspect_ratio: flowVars.ar
+		"id": "Aspect ratio not found."
 	}
 }]]></dw:set-payload>
-                    </dw:transform-message>
+                </dw:transform-message>
+            </otherwise>
+        </choice>
+    </sub-flow>
+    <sub-flow name="aspect_ratio_essence">
+        <logger message="External_id: #[flowVars.external_id]" level="INFO" doc:name="Expects external_id"/>
+    	<db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
+            <db:parameterized-query><![CDATA[SELECT comment 
+FROM premis_events 
+WHERE fragment_id IN (SELECT fragment_id FROM sips WHERE external_id = #[flowVars.external_id]) 
+AND type = 'CODEC_CHECK';]]></db:parameterized-query>
+                    </db:select>
+                    <choice doc:name="Codec_check event found?">
+                        <when expression="#[payload.size() &gt; 0]">
+                            <set-variable variableName="comment" value="#[payload[0].comment]" doc:name="Set comment"/>
+                            <logger message="#[flowVars.comment]" level="INFO" doc:name="Logger"/>
+                            <expression-component doc:name="Set aspect_ratio_essence (DAR) from output ffmpeg"><![CDATA[import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
+if (temp.find()) {
+    flowVars.aspect_ratio_essence = temp.group(1);
+} else {
+flowVars.aspect_ratio_essence = "unknown";
+}]]></expression-component>
+                            <logger message="Aspect ratio essence: #[flowVars.aspect_ratio_essence]" level="INFO" doc:name="Logger"/>
                         </when>
                         <otherwise>
-                    <logger message="Metadata not found for #[flowVars.verwant_aan]" level="INFO" doc:name="Metadata not found"/>
-                    
-                    <logger level="INFO" doc:name="Send request for metadata?"/>
-                    <dw:transform-message doc:name="Return response not found">
-                        <dw:set-payload><![CDATA[%dw 1.0
+                            <logger message="Metadata not found for #[flowVars.verwant_aan]" level="INFO" doc:name="Metadata not found"/>
+                            <logger level="INFO" doc:name="Send request for metadata?"/>
+                            <dw:transform-message doc:name="Return response not found">
+                                <dw:set-payload><![CDATA[%dw 1.0
 %output application/json
 ---
 {
@@ -160,30 +199,8 @@ flowVars.ar = "unknown";
 		pid: flowVars.id
 	}
 }]]></dw:set-payload>
-                    </dw:transform-message>
+                            </dw:transform-message>
                         </otherwise>
-                    </choice>
-                </when>
-                <otherwise>
-                    <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
-                    <logger level="INFO" doc:name="Send request for metadata?"/>
-                    <dw:transform-message doc:name="Return response not found">
-                        <dw:set-payload><![CDATA[%dw 1.0
-%output application/json
----
-{
-	"header": {
-		method: "GET",
-		path: flowVars.path,
-		status: "failure"
-	},
-	"data": {
-		"id": "Aspect ratio not found."
-	}
-}]]></dw:set-payload>
-                    </dw:transform-message>
-                </otherwise>
-            </choice>
-        </ee:cache>
-    </flow>
+                    </choice>                
+    </sub-flow>
 </mule>
