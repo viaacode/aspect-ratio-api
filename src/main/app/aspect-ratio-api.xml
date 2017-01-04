@@ -65,7 +65,7 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
             <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
                 <db:parameterized-query><![CDATA[SELECT comment 
 FROM premis_events 
-WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid]) 
+WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid])
 AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') 
 ORDER BY identifier DESC;]]></db:parameterized-query>
             </db:select>
@@ -84,9 +84,10 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 	"header": {
 		method: "GET",
 		path: flowVars.path,
-		status: "success"
+		status: "success" when flowVars.verwant_aan != '' and flowVars.media_id != '' otherwise "failure"
 	},
 	"data": {
+		(id: "Verwant aan relatie met VRT item niet gevonden") when flowVars.verwant_aan == '' or flowVars.media_id == '',
 		media_id: flowVars.media_id,
 		vrt_pid: flowVars.verwant_aan,
 		testbeeld_pid: flowVars.testbeeld_pid
@@ -94,8 +95,8 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 }]]></dw:set-payload>
                     </dw:transform-message>
                     <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-                                 </when>
-                                 <otherwise>
+                </when>
+                <otherwise>
                     <logger message="Metadata not found for #[flowVars.testbeeld_pid]" level="INFO" doc:name="Metadata not found"/>
                     <logger level="INFO" doc:name="Send request for metadata?"/>
                     <dw:transform-message doc:name="Return response not found">
@@ -114,7 +115,7 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 }]]></dw:set-payload>
                     </dw:transform-message>
                     <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-                                 </otherwise>
+                </otherwise>
             </choice>
         </ee:cache>
     </flow>
