@@ -1,5 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
-
 <mule xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -20,6 +18,9 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <reconnect-forever></reconnect-forever>  
     </db:generic-config>
     <context:property-placeholder location="${mule.env}.properties"/>
+    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.path]" doc:name="Caching Strategy">
+        <in-memory-store name="memory_store" entryTTL="604800000"/>
+    </ee:object-store-caching-strategy>
     <flow name="aspect-ratio-vrt">
         <http:listener config-ref="HTTP_Listener_Configuration" path="/vrt/{id}" allowedMethods="GET" doc:name="/vrt/{id}"/>
         <logger message="VRT Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
