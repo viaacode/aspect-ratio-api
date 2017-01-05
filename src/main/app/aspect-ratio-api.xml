@@ -135,7 +135,7 @@ LIMIT 1;]]></db:parameterized-query>
                 <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
                 <set-variable variableName="factorNumeratorMetadata" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumeratorMetadata (width)"/>
                 <set-variable variableName="factorDenominatorMetadata" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominatorMetadata (height)"/>
-                <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
+                <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata == null || flowVars.factorNumeratorMetadata.equals(&quot;&quot;) || flowVars.factorDenominatorMetadata == null || flowVars.factorDenominatorMetadata.equals(&quot;&quot;) ? null : flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
             </when>
             <otherwise>
                 <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
