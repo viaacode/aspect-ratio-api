@@ -20,9 +20,6 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <reconnect-forever></reconnect-forever>  
     </db:generic-config>
     <context:property-placeholder location="${mule.env}.properties"/>
-    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.path]" doc:name="Caching Strategy">
-        <in-memory-store name="memory_store" entryTTL="604800000"/>
-    </ee:object-store-caching-strategy>
     <flow name="aspect-ratio-vrt">
         <http:listener config-ref="HTTP_Listener_Configuration" path="/vrt/{id}" allowedMethods="GET" doc:name="/vrt/{id}"/>
         <logger message="VRT Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
@@ -62,13 +59,15 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <set-variable variableName="testbeeld_pid" value="#[message.inboundProperties.'http.uri.params'.testbeeld_pid]" doc:name="Set testbeeld_pid"/>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
         <ee:cache doc:name="Cache" cachingStrategy-ref="Caching_Strategy">
-            <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
-                <db:parameterized-query><![CDATA[SELECT comment 
+            <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+                <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
+                    <db:parameterized-query><![CDATA[SELECT comment 
 FROM premis_events 
 WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid])
 AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') 
 ORDER BY identifier DESC;]]></db:parameterized-query>
-            </db:select>
+                </db:select>
+            </until-successful>
             <choice doc:name="Original vrt file found?">
                 <when expression="#[payload.size() &gt; 0]">
                     <set-payload value="#[payload[0].comment.replace(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)]" doc:name="Set Payload with comment that contains metadata"/>
@@ -121,12 +120,14 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
     </flow>
     <sub-flow name="aspect_ratio_metadata">
         <logger message="Id: #[flowVars.id]" level="INFO" doc:name="Expects pid or media_id as 'id'"/>
-        <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
-            <db:parameterized-query><![CDATA[SELECT *
+        <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+            <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
+                <db:parameterized-query><![CDATA[SELECT *
 FROM vrt_message_buffer
 WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
 LIMIT 1;]]></db:parameterized-query>
-        </db:select>
+            </db:select>
+        </until-successful>
         <choice doc:name="Metadata found?">
             <when expression="#[payload.size()&gt;0]">
                 <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
@@ -160,12 +161,14 @@ LIMIT 1;]]></db:parameterized-query>
     </sub-flow>
     <sub-flow name="aspect_ratio_essence">
         <logger message="External_id: #[flowVars.external_id]" level="INFO" doc:name="Expects external_id"/>
-    	<db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
-            <db:parameterized-query><![CDATA[SELECT comment 
+        <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+            <db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
+                <db:parameterized-query><![CDATA[SELECT comment 
 FROM premis_events 
 WHERE fragment_id IN (SELECT fragment_id FROM sips WHERE external_id = #[flowVars.external_id]) 
 AND type = 'CODEC_CHECK';]]></db:parameterized-query>
-                    </db:select>
+            </db:select>
+        </until-successful>
                     <choice doc:name="Codec_check event found?">
                         <when expression="#[payload.size() &gt; 0]">
                             <set-variable variableName="comment" value="#[payload[0].comment]" doc:name="Set comment"/>
