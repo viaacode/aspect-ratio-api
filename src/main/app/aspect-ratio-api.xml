@@ -46,7 +46,9 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
 		factor_numerator_metadata: (flowVars.factorNumeratorMetadata) when flowVars.factorNumeratorMetadata != null otherwise 'unknown',
 		factor_denominator_metadata: (flowVars.factorDenominatorMetadata) when flowVars.factorDenominatorMetadata != null otherwise 'unknown',
 		aspect_ratio_metadata: flowVars.aspect_ratio_metadata when flowVars.aspect_ratio_metadata != null otherwise 'unknown',
-		aspect_ratio_essence: (flowVars.aspect_ratio_essence) when flowVars.aspect_ratio_essence != null otherwise 'unknown'
+		aspect_ratio_essence: (flowVars.aspect_ratio_essence) when flowVars.aspect_ratio_essence != null otherwise 'unknown',
+		hires_height: (flowVars.height) when flowVars.height != null otherwise 'unknown',
+		hires_width: (flowVars.width) when flowVars.width != null otherwise 'unknown'
 	}
 }]]></dw:set-payload>
             </dw:transform-message>
@@ -137,6 +139,8 @@ LIMIT 1;]]></db:parameterized-query>
                 <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
                 <set-variable variableName="factorNumeratorMetadata" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumeratorMetadata (width)"/>
                 <set-variable variableName="factorDenominatorMetadata" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominatorMetadata (height)"/>
+                <set-variable variableName="height" value="#[xpath3(&quot;//*[local-name()='format']/*[local-name()='videoFormat'][@videoFormatDefinition='hires']/*[local-name()='height']&quot;)]" doc:name="Set height"/>
+                <set-variable variableName="width" value="#[xpath3(&quot;//*[local-name()='format']/*[local-name()='videoFormat'][@videoFormatDefinition='hires']/*[local-name()='width']&quot;)]" doc:name="Set width"/>
                 <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata == null || flowVars.factorNumeratorMetadata.equals(&quot;&quot;) || flowVars.factorDenominatorMetadata == null || flowVars.factorDenominatorMetadata.equals(&quot;&quot;) ? null : flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
             </when>
             <otherwise>
