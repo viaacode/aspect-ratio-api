@@ -1,5 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
-
 <mule xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -59,7 +57,9 @@ limit 1]]></db:parameterized-query>
 		factor_numerator_metadata: (flowVars.factorNumeratorMetadata) when flowVars.factorNumeratorMetadata != null otherwise 'unknown',
 		factor_denominator_metadata: (flowVars.factorDenominatorMetadata) when flowVars.factorDenominatorMetadata != null otherwise 'unknown',
 		aspect_ratio_metadata: flowVars.aspect_ratio_metadata when flowVars.aspect_ratio_metadata != null otherwise 'unknown',
-		aspect_ratio_essence: (flowVars.aspect_ratio_essence) when flowVars.aspect_ratio_essence != null otherwise 'unknown'
+		aspect_ratio_essence: (flowVars.aspect_ratio_essence) when flowVars.aspect_ratio_essence != null otherwise 'unknown',
+		hires_height: (flowVars.height) when flowVars.height != null otherwise 'unknown',
+		hires_width: (flowVars.width) when flowVars.width != null otherwise 'unknown'
 	}
 }]]></dw:set-payload>
             </dw:transform-message>
@@ -73,13 +73,15 @@ limit 1]]></db:parameterized-query>
         <set-variable variableName="testbeeld_pid" value="#[message.inboundProperties.'http.uri.params'.testbeeld_pid]" doc:name="Set testbeeld_pid"/>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
         <ee:cache doc:name="Cache" cachingStrategy-ref="Caching_Strategy">
-            <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
-                <db:parameterized-query><![CDATA[SELECT comment 
+            <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+                <db:select config-ref="MAM" doc:name="Get metadata from MAM to find original_pid from vrt">
+                    <db:parameterized-query><![CDATA[SELECT comment 
 FROM premis_events 
-WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid]) 
+WHERE fragment_id IN(SELECT fragment_id FROM sips WHERE external_id = #[flowVars.testbeeld_pid])
 AND type IN('SIDECAR_CHECK', 'METADATA_RECONCILIATION') 
 ORDER BY identifier DESC;]]></db:parameterized-query>
-            </db:select>
+                </db:select>
+            </until-successful>
             <choice doc:name="Original vrt file found?">
                 <when expression="#[payload.size() &gt; 0]">
                     <set-payload value="#[payload[0].comment.replace(&quot;&amp;&quot;, &quot;&amp;amp;&quot;)]" doc:name="Set Payload with comment that contains metadata"/>
@@ -95,9 +97,10 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 	"header": {
 		method: "GET",
 		path: flowVars.path,
-		status: "success"
+		status: "success" when flowVars.verwant_aan != '' and flowVars.media_id != '' otherwise "failure"
 	},
 	"data": {
+		(id: "Verwant aan relatie met VRT item niet gevonden") when flowVars.verwant_aan == '' or flowVars.media_id == '',
 		media_id: flowVars.media_id,
 		vrt_pid: flowVars.verwant_aan,
 		testbeeld_pid: flowVars.testbeeld_pid
@@ -105,8 +108,8 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 }]]></dw:set-payload>
                     </dw:transform-message>
                     <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-                                 </when>
-                                 <otherwise>
+                </when>
+                <otherwise>
                     <logger message="Metadata not found for #[flowVars.testbeeld_pid]" level="INFO" doc:name="Metadata not found"/>
                     <logger level="INFO" doc:name="Send request for metadata?"/>
                     <dw:transform-message doc:name="Return response not found">
@@ -125,25 +128,29 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
 }]]></dw:set-payload>
                     </dw:transform-message>
                     <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-                                 </otherwise>
+                </otherwise>
             </choice>
         </ee:cache>
     </flow>
     <sub-flow name="aspect_ratio_metadata">
         <logger message="Id: #[flowVars.id]" level="INFO" doc:name="Expects pid or media_id as 'id'"/>
-        <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
-            <db:parameterized-query><![CDATA[SELECT *
+        <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+            <db:select config-ref="Borndigital" doc:name="Get metadata from buffer">
+                <db:parameterized-query><![CDATA[SELECT *
 FROM vrt_message_buffer
 WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
 LIMIT 1;]]></db:parameterized-query>
-        </db:select>
+            </db:select>
+        </until-successful>
         <choice doc:name="Metadata found?">
             <when expression="#[payload.size()&gt;0]">
                 <set-payload value="#[payload[0].message_payload]" doc:name="Set Payload with metadata"/>
                 <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
                 <set-variable variableName="factorNumeratorMetadata" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumeratorMetadata (width)"/>
                 <set-variable variableName="factorDenominatorMetadata" value="#[xpath3('//*[local-name()=\'factorDenominator\']/text()')]" doc:name="Set factorDenominatorMetadata (height)"/>
-                <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
+                <set-variable variableName="height" value="#[xpath3(&quot;//*[local-name()='format']/*[local-name()='videoFormat'][@videoFormatDefinition='hires']/*[local-name()='height']&quot;)]" doc:name="Set height"/>
+                <set-variable variableName="width" value="#[xpath3(&quot;//*[local-name()='format']/*[local-name()='videoFormat'][@videoFormatDefinition='hires']/*[local-name()='width']&quot;)]" doc:name="Set width"/>
+                <set-variable variableName="aspect_ratio_metadata" value="#[flowVars.factorNumeratorMetadata == null || flowVars.factorNumeratorMetadata.equals(&quot;&quot;) || flowVars.factorDenominatorMetadata == null || flowVars.factorDenominatorMetadata.equals(&quot;&quot;) ? null : flowVars.factorNumeratorMetadata + ':' + flowVars.factorDenominatorMetadata]" doc:name="Set aspect_ratio_metadata"/>
             </when>
             <otherwise>
                 <logger message="Metadata not found for #[flowVars.id]" level="INFO" doc:name="Metadata not found"/>
@@ -168,12 +175,14 @@ LIMIT 1;]]></db:parameterized-query>
     </sub-flow>
     <sub-flow name="aspect_ratio_essence">
         <logger message="External_id: #[flowVars.external_id]" level="INFO" doc:name="Expects external_id"/>
-    	<db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
-            <db:parameterized-query><![CDATA[SELECT comment 
+        <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
+            <db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
+                <db:parameterized-query><![CDATA[SELECT comment 
 FROM premis_events 
 WHERE fragment_id IN (SELECT fragment_id FROM sips WHERE external_id = #[flowVars.external_id]) 
 AND type = 'CODEC_CHECK';]]></db:parameterized-query>
-                    </db:select>
+            </db:select>
+        </until-successful>
                     <choice doc:name="Codec_check event found?">
                         <when expression="#[payload.size() &gt; 0]">
                             <set-variable variableName="comment" value="#[payload[0].comment]" doc:name="Set comment"/>
