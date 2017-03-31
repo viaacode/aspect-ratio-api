@@ -29,6 +29,17 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <set-variable variableName="id" value="#[message.inboundProperties.'http.request.uri'.substring(message.inboundProperties.'http.request.uri'.lastIndexOf('/')+1)]" doc:name="Set id (pid or media_id)"/>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
         <ee:cache cachingStrategy-ref="Caching_Strategy" doc:name="Cache">
+            <db:select config-ref="Borndigital" doc:name="Get pid and media_id">
+                <db:parameterized-query><![CDATA[select pid, media_id
+from vrt_message_buffer
+where (media_id = #[flowVars.id] OR pid = #[flowVars.id])
+	AND pid is not null
+	AND media_id is not null
+ORDER BY lastmodificationdate desc
+limit 1]]></db:parameterized-query>
+            </db:select>
+            <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
+            <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
             <flow-ref name="aspect_ratio_metadata" doc:name="aspect_ratio_metadata"/>
             <set-variable variableName="external_id" value="#[flowVars.pid != null ? flowVars.pid : flowVars.id]" doc:name="Set external_id with pid, otherwise with id when pid not found in buffer"/>
             <flow-ref name="aspect_ratio_essence" doc:name="aspect_ratio_essence"/>
@@ -128,8 +139,6 @@ LIMIT 1;]]></db:parameterized-query>
         </db:select>
         <choice doc:name="Metadata found?">
             <when expression="#[payload.size()&gt;0]">
-                <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
-                <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
                 <set-payload value="#[payload[0].message_payload]" doc:name="Set Payload with metadata"/>
                 <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
                 <set-variable variableName="factorNumeratorMetadata" value="#[xpath3(&quot;//*[local-name()=\'factorNumerator\']/text()&quot;)]" doc:name="Set factorNumeratorMetadata (width)"/>
