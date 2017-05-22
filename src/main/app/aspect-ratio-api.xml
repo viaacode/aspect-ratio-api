@@ -1,4 +1,4 @@
-<mule xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+<mule xmlns:objectstore="http://www.mulesoft.org/schema/mule/objectstore" xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
@@ -9,7 +9,8 @@ http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/m
 http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
 http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
 http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd
-http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/objectstore http://www.mulesoft.org/schema/mule/objectstore/current/mule-objectstore.xsd">
     <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="10008" doc:name="HTTP Listener Configuration"/>
     <db:generic-config name="Borndigital" url="jdbc:postgresql://${db.host}:${db.port}/${db.database}?password=${db.password}&amp;user=${db.username}" driverClassName="org.postgresql.Driver" doc:name="Borndigital DB">
         <reconnect-forever></reconnect-forever>  
@@ -18,15 +19,17 @@ http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/
         <reconnect-forever></reconnect-forever>  
     </db:generic-config>
     <context:property-placeholder location="${mule.env}.properties"/>
-    <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.path]" doc:name="Caching Strategy">
-        <in-memory-store name="memory_store" entryTTL="604800000"/>
+        <ee:object-store-caching-strategy name="Caching_Strategy" keyGenerationExpression="#[flowVars.path]" doc:name="Caching Strategy">
+        <managed-store storeName="memory_store" />
     </ee:object-store-caching-strategy>
+    <objectstore:config name="memory_store" doc:name="ObjectStore: Connector" entryTtl="604800000" partition="memory_store" expirationInterval="900000" maxEntries="4000"/>
     <flow name="aspect-ratio-vrt">
         <http:listener config-ref="HTTP_Listener_Configuration" path="/vrt/{id}" allowedMethods="GET" doc:name="/vrt/{id}"/>
         <logger message="VRT Request received #[message.inboundProperties.'http.request.uri']" level="INFO" doc:name="Request received"/>
         <set-variable variableName="id" value="#[message.inboundProperties.'http.request.uri'.substring(message.inboundProperties.'http.request.uri'.lastIndexOf('/')+1)]" doc:name="Set id (pid or media_id)"/>
         <set-variable variableName="path" value="#[message.inboundProperties.'http.request.uri']" doc:name="Set path"/>
         <ee:cache cachingStrategy-ref="Caching_Strategy" doc:name="Cache">
+            <logger message="Not cached" level="INFO" doc:name="Not cached"/>
             <db:select config-ref="Borndigital" doc:name="Get pid and media_id">
                 <db:parameterized-query><![CDATA[select pid, media_id
 from vrt_message_buffer
@@ -64,7 +67,16 @@ limit 1]]></db:parameterized-query>
 }]]></dw:set-payload>
             </dw:transform-message>
             <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+            <set-variable variableName="result" value="#[payload]" doc:name="Set result"/>
         </ee:cache>
+        <choice doc:name="When AR metadata is unknown, remove from cache">
+            <when expression="#[flowVars.aspect_ratio_metadata != null]">
+                <expression-component doc:name="Expression"><![CDATA[// do nothing]]></expression-component>
+            </when>
+            <otherwise>
+                <expression-component doc:name="Remove from object store"><![CDATA[app.registry.'memory_store'.getConfig().getObjectStore().remove(flowVars.path)]]></expression-component>
+            </otherwise>
+        </choice>
         <logger message="Returns response #[payload]" level="INFO" doc:name="Returns response"/>
     </flow>
     <flow name="testbeeldrelation">
@@ -131,6 +143,14 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
                 </otherwise>
             </choice>
         </ee:cache>
+        <choice doc:name="When AR metadata is unknown, remove from cache">
+            <when expression="#[flowVars.aspect_ratio_metadata != null]">
+                <expression-component doc:name="Expression"><![CDATA[// do nothing]]></expression-component>
+            </when>
+            <otherwise>
+                <expression-component doc:name="Remove from object store"><![CDATA[app.registry.'memory_store'.getConfig().getObjectStore().remove(flowVars.path)]]></expression-component>
+            </otherwise>
+        </choice>
     </flow>
     <sub-flow name="aspect_ratio_metadata">
         <logger message="Id: #[flowVars.id]" level="INFO" doc:name="Expects pid or media_id as 'id'"/>
