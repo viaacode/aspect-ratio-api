@@ -39,13 +39,15 @@ where (media_id = #[flowVars.id] OR pid = #[flowVars.id])
 ORDER BY lastmodificationdate desc
 limit 1]]></db:parameterized-query>
             </db:select>
-            <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
-            <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
-            <flow-ref name="aspect_ratio_metadata" doc:name="aspect_ratio_metadata"/>
-            <set-variable variableName="external_id" value="#[flowVars.pid != null ? flowVars.pid : flowVars.id]" doc:name="Set external_id with pid, otherwise with id when pid not found in buffer"/>
-            <flow-ref name="aspect_ratio_essence" doc:name="aspect_ratio_essence"/>
-            <dw:transform-message doc:name="Return response">
-                <dw:set-payload><![CDATA[%dw 1.0
+            <choice doc:name="Any results?">
+                <when expression="#[payload.size() &gt; 0]">
+                    <set-variable variableName="pid" value="#[payload[0].pid]" doc:name="Set pid"/>
+                    <set-variable variableName="media_id" value="#[payload[0].media_id]" doc:name="Set media_id"/>
+                    <flow-ref name="aspect_ratio_metadata" doc:name="aspect_ratio_metadata"/>
+                    <set-variable variableName="external_id" value="#[flowVars.pid != null ? flowVars.pid : flowVars.id]" doc:name="Set external_id with pid, otherwise with id when pid not found in buffer"/>
+                    <flow-ref name="aspect_ratio_essence" doc:name="aspect_ratio_essence"/>
+                    <dw:transform-message doc:name="Return response">
+                        <dw:set-payload><![CDATA[%dw 1.0
 %output application/json
 ---
 {
@@ -65,7 +67,28 @@ limit 1]]></db:parameterized-query>
 		hires_width: (flowVars.width) when flowVars.width != null otherwise 'unknown'
 	}
 }]]></dw:set-payload>
-            </dw:transform-message>
+                    </dw:transform-message>
+                </when>
+                <otherwise>
+                    <dw:transform-message doc:name="Transform Message">
+                        <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	"header": {
+		method: "GET",
+		path: flowVars.path,
+		status: "failed",
+		message: "No info found for this pid"
+	},
+	"data": {
+		aspect_ratio_metadata: 'unknown'
+	}
+}]]></dw:set-payload>
+                    </dw:transform-message>
+                    <set-property propertyName="http.status" value="404" doc:name="Property"/>
+                </otherwise>
+            </choice>
             <byte-array-to-string-transformer doc:name="Byte Array to String"/>
             <set-variable variableName="result" value="#[payload]" doc:name="Set result"/>
         </ee:cache>
@@ -159,6 +182,7 @@ ORDER BY identifier DESC;]]></db:parameterized-query>
                 <db:parameterized-query><![CDATA[SELECT *
 FROM vrt_message_buffer
 WHERE (media_id = #[flowVars.id] OR pid = #[flowVars.id]) AND event_name = 'metadataRequestedEvent' AND status = 'delivered'
+ORDER BY reception_date DESC
 LIMIT 1;]]></db:parameterized-query>
             </db:select>
         </until-successful>
