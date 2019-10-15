@@ -2,7 +2,7 @@
 <Configuration>
     <Appenders>
         <RollingFile name="file" fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}aspect-ratio-api.log" 
-                 filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}aspect-ratio-api-%i.log">
+                 filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}aspect-ratio-api.log.%i">
             <PatternLayout pattern="%d [%t] %-5p %c - %m%n" />
             <SizeBasedTriggeringPolicy size="5 MB" />
             <DefaultRolloverStrategy max="10"/>
