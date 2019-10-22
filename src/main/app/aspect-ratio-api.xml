@@ -1,4 +1,4 @@
-<mule xmlns:objectstore="http://www.mulesoft.org/schema/mule/objectstore" xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:objectstore="http://www.mulesoft.org/schema/mule/objectstore" xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:context="http://www.springframework.org/schema/context" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
@@ -10,7 +10,8 @@ http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee
 http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
 http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd
 http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
-http://www.mulesoft.org/schema/mule/objectstore http://www.mulesoft.org/schema/mule/objectstore/current/mule-objectstore.xsd">
+http://www.mulesoft.org/schema/mule/objectstore http://www.mulesoft.org/schema/mule/objectstore/current/mule-objectstore.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd">
     <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="10008" doc:name="HTTP Listener Configuration"/>
     <db:generic-config name="Borndigital" url="jdbc:postgresql://${db.host}:${db.port}/${db.database}?password=${db.password}&amp;user=${db.username}" driverClassName="org.postgresql.Driver" doc:name="Borndigital DB">
         <reconnect-forever></reconnect-forever>  
@@ -220,26 +221,18 @@ LIMIT 1;]]></db:parameterized-query>
     <sub-flow name="aspect_ratio_essence">
         <logger message="External_id: #[flowVars.external_id]" level="INFO" doc:name="Expects external_id"/>
         <until-successful maxRetries="10" millisBetweenRetries="1000" doc:name="Until Successful" synchronous="true">
-            <db:select config-ref="MAM" doc:name="Get CODEC_CHECK event from MAM">
-                <db:parameterized-query><![CDATA[SELECT comment 
+            <db:select config-ref="MAM" doc:name="Get (VALIDATION.)CODEC_CHECK event from MAM">
+                <db:parameterized-query><![CDATA[SELECT comment, type
 FROM premis_events 
 WHERE fragment_id IN (SELECT fragment_id FROM sips WHERE external_id = #[flowVars.external_id]) 
-AND type = 'CODEC_CHECK';]]></db:parameterized-query>
+AND type IN('CODEC_CHECK', 'VALIDATION.CODEC_CHECK');]]></db:parameterized-query>
             </db:select>
         </until-successful>
                     <choice doc:name="Codec_check event found?">
                         <when expression="#[payload.size() &gt; 0]">
-                            <set-variable variableName="comment" value="#[payload[0].comment]" doc:name="Set comment"/>
-                            <logger message="#[flowVars.comment]" level="INFO" doc:name="Logger"/>
-                            <expression-component doc:name="Set aspect_ratio_essence (DAR) from output ffmpeg"><![CDATA[import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
-if (temp.find()) {
-    flowVars.aspect_ratio_essence = temp.group(1);
-} else {
-flowVars.aspect_ratio_essence = "unknown";
-}]]></expression-component>
+                            <set-variable variableName="comment" value="#[payload[0].comment]" doc:name="Set comment to the first item's comment"/>
+                <set-payload value="#[flowVars.comment]" doc:name="Set Payload to comment"/>
+                <flow-ref name="get-aspect-ratio-from-codec-check" doc:name="get-aspect-ratio-from-codec-check"/>
                             <logger message="Aspect ratio essence: #[flowVars.aspect_ratio_essence]" level="INFO" doc:name="Logger"/>
                         </when>
                         <otherwise>
@@ -265,4 +258,30 @@ flowVars.aspect_ratio_essence = "unknown";
                         </otherwise>
                     </choice>                
     </sub-flow>
+    <flow name="get-aspect-ratio-from-codec-check">
+        <json:json-to-object-transformer returnClass="java.util.HashMap" doc:name="JSON to Object"/>
+        <logger message="CODEC_CHECK event for #[flowVars.id] is a JSON" level="INFO" doc:name="CODEC_CHECK event is a JSON"/>
+        <expression-component doc:name="Retrieve display_aspect_ratio from JSON"><![CDATA[import java.util.HashMap;
+
+for (int i = 0; i < payload.streams.size(); i++) 
+{ 
+	HashMap currentStream = payload.streams[i];
+	if (currentStream["codec_type"].equals("video")) {
+		flowVars.aspect_ratio_essence = currentStream["display_aspect_ratio"];
+		return payload;
+	}
+}]]></expression-component>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <logger message="CODEC_CHECK event for #[flowVars.id] is NOT a JSON. Trying to parse using Regex." level="INFO" doc:name="CODEC_CHECK event for #[flowVars.id] is NOT a JSON"/>
+            <expression-component doc:name="Set aspect_ratio_essence (DAR) from output ffmpeg"><![CDATA[import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+Matcher temp = Pattern.compile("DAR ([0-9]+:[0-9]+)").matcher(flowVars.comment);
+if (temp.find()) {
+    flowVars.aspect_ratio_essence = temp.group(1);
+} else {
+flowVars.aspect_ratio_essence = "unknown";
+}]]></expression-component>
+        </catch-exception-strategy>
+    </flow>
 </mule>
